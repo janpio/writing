@@ -268,8 +268,6 @@ Error: Invalid default value for 'a'
 
 *** MySQL 8.0.19
 
-For all MySQL versions we generate the same SQL.
-
 The result =prisma db push= gives to us:
 
 #+begin_src text
