@@ -2,8 +2,8 @@
 
 Historically Prisma has been using two ways to define default values:
 
-- As a direct definition =@default("1996-12-19T16:39:57-08:00")=
-- ...or as a database-generated default =@default(dbgenerated("'16:20:00'"))=.
+- As a direct definition ="1996-12-19T16:39:57-08:00"=
+- ...or as a database-generated default =dbgenerated("'16:20:00'")=.
 
 If *using the first definition, the default value of the column is inserted via the Query Engine*, while *the second lets the database set the value*. This has been convenient for us; we by default handle the defaults in the Engine -- not needing to worry if the database does support them. We always have a default for a column, making things simpler. *Both definition variants are used by the Migration Engine to define the default value to the database DDL.*
 
@@ -24,13 +24,46 @@ An example of a data model defining a datetime default format using the RFC-3339
 
 When the user writes a query that creates a new =A= to the database and doesn't define =val= in the insert, the Query Engine generates a value based on the definition in the PSL =@default= attribute.
 
+** Executive Summary of Broken Things
+
+Tables show what errors to expect with a combination of the given type and database.
+
+- C = Client stores default and explicitly given value wrong
+- M = Migrate fails to write the correct value in a migration
+- I = Introspection fails to read the value back from a migrated database correctly.
+- * = Default native type
+
+| MySQL Type | <= 8.0.18 | > 8.0.18 |
+|------------+----------+-----------|
+| DateTime*  | C M I    | C I       |
+| Time       | C M I    | C I       |
+| Date       | C M I    | C I       |
+| Timestamp  | M I      | I         |
+
+| PostgreSQL Type | Versions 9 to 14 |
+| Timestamp*      | I                |
+| Date            | C I              |
+| Time            | C I              |
+| Timetz          | C I              |
+| Timestamptz     | C I              |
+
+| SQL Server Type | Versions 2017 and 2019 |
+| DateTime2*      | C I                    |
+| DateTime        | C I                    |
+| SmallDateTime   | C I                    |
+| DateTimeOffset  | C I                    |
+| Date            | C I                    |
+| Time            | C I                    |
+
+In the next chapters we go through the problems one by one. In general we see Migration Engine failing with datetime defaults in older MySQL versions, Introspection Engine not really able to read datetime defaults in any database and Client will produce wrong values if the user uses a non-UTC timezone for every type except timestamps.
+
 ** The Result in Different Datetime Types
 
-In the following examples we take a look what actually gets stored when we either use a non-UTC default value or the client uses a non-UTC value in their insert query.
+In the following examples we take a look what actually gets stored when we either use a non-UTC default value or the client uses a non-UTC value in their insert query. Failures in this chapters are marked with =C= in the tables.
 
 ** MySQL
 
-In our example we store a default value of =@default("1975-08-19T23:15:30+07:00")= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing (see below where we modify the value).
+In our example we store a default value of ="1975-08-19T23:15:30+07:00"= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing (see below where we modify the value).
 
 *** @db.DateTime
 
@@ -52,7 +85,7 @@ A timestamp value is always a number of (micro)seconds since =1970-01-01 00:00:0
 
 ** PostgreSQL
 
-In our example we store a default value of =@default("1975-08-19T23:15:30+07:00")= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing.
+In our example we store a default value of ="1975-08-19T23:15:30+07:00"= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing.
 
 *** @db.Timestamp
 
@@ -66,7 +99,7 @@ A timestamp with an additional offset given. Prisma stores the timestamp as in t
 
 *** @db.Date
 
-We have in the PSL the default =@default("1975-08-19T00:05:30+01:00")=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. We store the value of =1975-08-18= and other systems writing to the database use the value =1975-08-19=.
+We have in the PSL the default =1975-08-19T00:05:30+01:00=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. We store the value of =1975-08-18= and other systems writing to the database use the value =1975-08-19=.
 
 *** @db.Time
 
@@ -78,7 +111,7 @@ Storing the value =16:15:30Z=. Other systems store the given =23:15:30+07:00= an
 
 ** SQL Server
 
-In our example we store a default value of =@default("1975-08-19T23:15:30+07:00")= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing.
+In our example we store a default value of =1975-08-19T23:15:30+07:00= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing.
 
 *** @db.Datetime2 / @db.Datetime / @db.SmallDateTime
 
@@ -88,7 +121,7 @@ Storing the value =1975-08-19 16:15:30=. In the database we have values stored f
 
 *** @db.Date
 
-We have in the PSL the default =@default("1975-08-19T00:05:30+01:00")=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. We store the value of =1975-08-18= and other systems writing to the database use the value =1975-08-19=.
+We have in the PSL the default =1975-08-19T00:05:30+01:00=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. We store the value of =1975-08-18= and other systems writing to the database use the value =1975-08-19=.
 
 *** @db.Time
 
@@ -132,7 +165,7 @@ undefined
 
 The client query in GraphQL then gets the value in UTC:
 
-#+begin_src graphql
+#+begin_src javascript
 mutation {
   createOneA(data: {
     val: "1975-08-19T16:15:30.000Z"
@@ -157,7 +190,7 @@ await prisma.a.create({ data: {
 }})
 #+end_src
 
-#+begin_src graphql
+#+begin_src javascript
 mutation {
   createOneA(data: {
     val: "1975-08-19T16:15:30.000Z"
@@ -631,11 +664,11 @@ params=[2022-01-20 17:47:10.197774387 UTC]
 
 The =updatedAt= can be used in any datetime types. The resulting value will just lose precision depending on the type.
 
-** How Our DateTime Handling is Problematic in MySQL
+** How Our DateTime Handling is Especially Problematic in MySQL
 
 MySQL does not store the timezone to any of the datetime columns it supports: =DATE= for dates, =TIME= for times, =DATETIME= for combined dates and times and =TIMESTAMP= for (micro)seconds since 1970.
 
-The user has a few different ways to define the timezone of inserted datetimes:
+The user has a few different ways to define the timezone for inserted datetimes:
 
 - When starting the server, either implicitly from the system =locale=, using a parameter, using a configuration value or an environment variable.
 - With =SET GLOBAL time_zone = ...= as an admin user.
@@ -786,11 +819,13 @@ model A {
 
 ** Changes in the Query Engine
 
-The Query Engine should not break client workflows when defining the =@default= attribute directly. Especially in systems such as MySQL where converting to UTC would lead to wrong default values being written. This issue must be addressed before the new defaults can be used in the Migration and Introspection engines accordingly.
+The Query Engine should not break user workflows when defining the =@default= attribute directly. Especially in systems such as MySQL where converting to UTC would lead to wrong default values being written. This issue must be addressed before the new defaults can be used in the Migration and Introspection engines accordingly.
 
 *** Solution #1: Stop Handling Defaults in the Query Engine
 
 If the database supports default values, the Query Engine should stop adding them to the queries, leaving it for the database. In the scope of dates and times, we should just remove the client side defaults for the datetime values; still having them for databases such as MongoDB which doesn't support default values.
+
+This solution will allow the Migrations team to work on the PSL, Migration Engine and Introspection Engine changes without client needing to change their data structures. Would be the MVP solving default values, but not explicit datetimes from the Client.
 
 *** Solution #2: Adding More Internal DateTime Types
 
@@ -810,28 +845,39 @@ enum Value {
 
 This means the Query Engine needs to convert the full date to the corresponding type in the conversion from JavaScript to Rust. In this way the default value gets no conversion to UTC and we write the value the user expects us to insert.
 
-*** Solution #3: More Types in PSL, Conversion to DateTimeOffset for
+This solution has the biggest amount of work for the Client team. They must convert the input to the correct datetime types per request. As with Solution #1, this will fix the default values but the JavaScript code would still be sending incorrect timezones and the explicitly given datetimes would not be stored correctly.
+
+*** Solution #3: More Types in PSL, Conversion to =DateTime<FixedOffset>= in the Client
 
 Instead of changing the =Value= for Query Engine, Migration Engine and Introspection Engine, we could have a separate =Value= implementation for the migrations and introspection, keeping the =Value= implementation of Query Engine as-is. This means for the PSL and schema side of things we have more granularity (see the =Value= definition in the Solution #2).
 
-When communicating the AST from the PSL side to the Query Engine, we convert the more granular datetime value to a =DateTime<FixedOffset>=. The Query Engine must either take care to inform the database in what timezone the values are written. This can be handled [[https://dev.mysql.com/doc/refman/5.6/en/time-zone-support.html#time-zone-variables][per connection]]:
+When communicating the AST from the PSL side to the Query Engine, we convert the more granular datetime value to a =DateTime<FixedOffset>=.
+
+This solution would allow us to fix Migration and Introspection problems. The Client would still be writing incorrect values on non-UTC timezones.
+
+*** Solution #4: Timezone-aware Client and Query Engine
+
+This solution is a bit mixed bag. It can be combined with one of the earlier solutions, and is the one that would solve the write issues on different time zones correctly.
+
+We'd introduce a new option in the connection string to define the client time zone. This would have a few different meanings in Prisma:
+
+In case of MySQL, the Query Engine must either take care to inform the database in what timezone the values are written. This can be handled [[https://dev.mysql.com/doc/refman/5.6/en/time-zone-support.html#time-zone-variables][per connection]]:
 
 #+begin_src sql
 SET time_zone = timezone;
 #+end_src
 
-In the first phase, Quaint should just initialize the connection with =UTC= timezone.
+Having the parameter on Quaint initialization would make Quaint to define the timezone on MySQL connections.
 
-As a second step, we can provide a way for the user to set the timezone in the connection string. That leads to certain changes:
+Additionally, the parameter needs to find its way to the Client initialization in the JavaScript side, using it in the serialization before the value is passed to the Query Engine.
 
-- JavaScript stringifies the =Date= with the given timezone
-- Query Engine respects the given timezone
-- Quaint initializes the connection with the given timezone.
+This configuration approach follows how the [[https://github.com/mysqljs/mysql#establishing-connections][official MySQL client handles timezones]].
 
-This approach follows how the [[https://github.com/mysqljs/mysql#establishing-connections][official MySQL client handles timezones]].
+Other databases than MySQL are not able to define the timezone in the connection. For them it is enough for the JavaScript Client code to stringify the =Date= object in the right timezone, and the client to not tamper with the value, allowing the user-provided and default values to get written to the database correctly.
+
+Finally the Query Engine must stop tampering with the timezones and just pass the value to the database as-is.
 
 ** Breaking Changes?
-
 
 - The PSL validations would not allow the RFC-3339 values on some of the datetime native types anymore.
 - The defaults would be introspected without =dbgenerated=. */(not sure if breaking)/*
