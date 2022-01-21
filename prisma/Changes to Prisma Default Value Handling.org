@@ -63,7 +63,7 @@ In the following examples we take a look what actually gets stored when we eithe
 
 ** MySQL
 
-In our example we store a default value of ="1975-08-19T23:15:30+07:00"= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing (see below where we modify the value).
+In our example we store a default value of =1975-08-19T23:15:30+07:00= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing (see below where we modify the value).
 
 *** @db.DateTime
 
