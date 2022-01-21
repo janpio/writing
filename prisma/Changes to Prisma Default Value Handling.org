@@ -190,10 +190,11 @@ await prisma.a.create({ data: {
 }})
 #+end_src
 
+The JavaScipt code is not tampering with non-existing values, and we get the following GraphQL query in the Query Engine.
+
 #+begin_src javascript
 mutation {
   createOneA(data: {
-    val: "1975-08-19T16:15:30.000Z"
     foo: "bar"
   }) {
     id
@@ -202,6 +203,8 @@ mutation {
   }
 }
 #+end_src
+
+The Query Core sees a missing value, and finds the default one from the PSL. At this point we are still in the correct time zone, but when we cross the boundary to the SQL connector, we convert the time zone to UTC, changing the clock to a different position before writing to the database.
 
 *** Result in the database
 
