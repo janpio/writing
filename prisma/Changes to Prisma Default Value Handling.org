@@ -31,24 +31,24 @@ Tables show what errors to expect with a combination of the given type and datab
 - C = Client stores default and explicitly given value wrong
 - M = Migrate fails to write the correct value in a migration
 - I = Introspection fails to read the value back from a migrated database correctly.
-- * = Default native type
+- (+) = Default native type
 
-| MySQL Type | <= 8.0.18 | > 8.0.18 |
-|------------+----------+-----------|
-| DateTime*  | C M I    | C I       |
-| Time       | C M I    | C I       |
-| Date       | C M I    | C I       |
-| Timestamp  | M I      | I         |
+| MySQL Type   | <= 8.0.18 | > 8.0.18 |
+|--------------+-----------+----------|
+| DateTime (+) | C M I     | C I      |
+| Time         | C M I     | C I      |
+| Date         | C M I     | C I      |
+| Timestamp    | M I       | I        |
 
 | PostgreSQL Type | Versions 9 to 14 |
-| Timestamp*      | I                |
+| Timestamp (+)   | I                |
 | Date            | C I              |
 | Time            | C I              |
 | Timetz          | C I              |
 | Timestamptz     | C I              |
 
 | SQL Server Type | Versions 2017 and 2019 |
-| DateTime2*      | C I                    |
+| DateTime2 (+)   | C I                    |
 | DateTime        | C I                    |
 | SmallDateTime   | C I                    |
 | DateTimeOffset  | C I                    |
