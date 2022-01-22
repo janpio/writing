@@ -1,0 +1,22 @@
+name: Pandoc conversion
+on:
+  pull_request:
+jobs:
+  convert:
+    name: Pandoc Conversion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - uses: r-lib/actions/setup-pandoc@v1
+
+      - uses: dante-ev/latex-action@latest
+        name: Conversion
+        with:
+          entrypoint: ./convert.sh
+
+      - uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: Conversion
+          commit_user_name: conversion-bot
+          commit_user_email: conversionbot@nauk.io
+          commit_author: conversion-bot <conversionbot@nauk.io>
