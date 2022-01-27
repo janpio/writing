@@ -1,15 +1,63 @@
+-   [Handling of DateTime Default Values in
+    Prisma](#handling-of-datetime-default-values-in-prisma)
+    -   [Defaults in dates and times](#defaults-in-dates-and-times)
+    -   [Executive Summary of Broken
+        Things](#executive-summary-of-broken-things)
+        -   [MySQL](#mysql)
+        -   [PostgreSQL](#postgresql)
+        -   [SQL Server](#sql-server)
+    -   [How Prisma Client Breaks With Default DateTime
+        Values](#how-prisma-client-breaks-with-default-datetime-values)
+        -   [MySQL](#mysql-1)
+        -   [PostgreSQL](#postgresql-1)
+        -   [SQL Server](#sql-server-1)
+    -   [Why and Where We Break The Values in Prisma
+        Client](#why-and-where-we-break-the-values-in-prisma-client)
+        -   [Datetime via Prisma Client
+            query](#datetime-via-prisma-client-query)
+        -   [Datetime via default in Prisma
+            Client](#datetime-via-default-in-prisma-client)
+        -   [Result in the database](#result-in-the-database)
+    -   [Default Values in Migrations](#default-values-in-migrations)
+        -   [MySQL 8.0.18](#mysql-8.0.18)
+        -   [MySQL 8.0.19](#mysql-8.0.19)
+        -   [MySQL 5.7.32](#mysql-5.7.32)
+        -   [MariaDB 10](#mariadb-10)
+        -   [PostgreSQL 14](#postgresql-14)
+        -   [SQL Server 2019](#sql-server-2019)
+    -   [Default With Current
+        Timestamp](#default-with-current-timestamp)
+    -   [Default with updatedAt](#default-with-updatedat)
+    -   [How Our DateTime Handling is Especially Problematic in
+        MySQL](#how-our-datetime-handling-is-especially-problematic-in-mysql)
+-   [Suggested Changes](#suggested-changes)
+    -   [Changes in Migrations and
+        Introspection](#changes-in-migrations-and-introspection)
+        -   [Introduce new ways to express datetimes in
+            `@default`](#introduce-new-ways-to-express-datetimes-in-default)
+    -   [Changes in the Query Engine](#changes-in-the-query-engine)
+        -   [Solution \#1: Stop Handling Defaults in the Query
+            Engine](#solution-1-stop-handling-defaults-in-the-query-engine)
+        -   [Solution \#2: Adding More Internal DateTime
+            Types](#solution-2-adding-more-internal-datetime-types)
+        -   [Solution \#3: More Types in PSL, Conversion to
+            `DateTime<FixedOffset>` in the
+            Client](#solution-3-more-types-in-psl-conversion-to-datetimefixedoffset-in-the-client)
+        -   [Solution \#4: Timezone-aware Client and Query
+            Engine](#solution-4-timezone-aware-client-and-query-engine)
+    -   [Breaking Changes?](#breaking-changes)
+
 # Handling of DateTime Default Values in Prisma
 
 Historically Prisma has been using two ways to define default values:
 
--   As a direct definition `"1996-12-19T16:39:57-08:00"`{.verbatim}
--   ...or as a database-generated default
-    `dbgenerated("'16:20:00'")`{.verbatim}.
+-   As a direct definition `"1996-12-19T16:39:57-08:00"`
+-   …or as a database-generated default `dbgenerated("'16:20:00'")`.
 
 If **using the first definition, the default value of the column is
 inserted via the Query Engine**, while **the second lets the database
 set the value**. This has been convenient for us; we by default handle
-the defaults in the Engine -- not needing to worry if the database does
+the defaults in the Engine – not needing to worry if the database does
 support them. We always have a default for a column, making things
 simpler. **Both definition variants are used by the Migration Engine to
 define the default value to the database DDL.**
@@ -28,17 +76,16 @@ using the default values defined in the PSL.
 An example of a data model defining a datetime default format using the
 RFC-3339 format:
 
-``` {.prisma}
+``` prisma
 model A {
   id  Int      @id
   val DateTime @default("1975-08-19T23:15:30+07:00")
 }
 ```
 
-When the user writes a query that creates a new `A`{.verbatim} to the
-database and doesn\'t define `val`{.verbatim} in the insert, the Query
-Engine generates a value based on the definition in the PSL
-`@default`{.verbatim} attribute.
+When the user writes a query that creates a new `A` to the database and
+doesn't define `val` in the insert, the Query Engine generates a value
+based on the definition in the PSL `@default` attribute.
 
 ## Executive Summary of Broken Things
 
@@ -53,33 +100,33 @@ and database.
 
 ### MySQL
 
-  Type           \<= 8.0.18   \> 8.0.18
-  -------------- ------------ -----------
-  DateTime (+)   C M I        C I
-  Time           C M I        C I
-  Date           C M I        C I
-  Timestamp      M I          I
+| Type         | &lt;= 8.0.18 | &gt; 8.0.18 |
+|--------------|--------------|-------------|
+| DateTime (+) | C M I        | C I         |
+| Time         | C M I        | C M I       |
+| Date         | C M I        | C M I       |
+| Timestamp    | M I          | I           |
 
 ### PostgreSQL
 
-  Type            Versions 9 to 14
-  --------------- ------------------
-  Timestamp (+)   I
-  Date            C I
-  Time            C I
-  Timetz          C I
-  Timestamptz     C I
+| Type          | Versions 9 to 14 |
+|---------------|------------------|
+| Timestamp (+) | I                |
+| Date          | C I              |
+| Time          | C I              |
+| Timetz        | C I              |
+| Timestamptz   | C I              |
 
 ### SQL Server
 
-  Type             Versions 2017 and 2019
-  ---------------- ------------------------
-  DateTime2 (+)    C I
-  DateTime         C I
-  SmallDateTime    C I
-  DateTimeOffset   C I
-  Date             C I
-  Time             C I
+| Type           | Versions 2017 and 2019 |
+|----------------|------------------------|
+| DateTime2 (+)  | C I                    |
+| DateTime       | C I                    |
+| SmallDateTime  | C I                    |
+| DateTimeOffset | C I                    |
+| Date           | C I                    |
+| Time           | C I                    |
 
 In the next chapters we go through the problems one by one. In general
 we see Migration Engine failing with datetime defaults in older MySQL
@@ -87,142 +134,141 @@ versions, Introspection Engine not really able to read datetime defaults
 in any database and Client will produce wrong values if the user uses a
 non-UTC timezone for every type except timestamps.
 
-## The Result in Different Datetime Types
+## How Prisma Client Breaks With Default DateTime Values
 
-In the following examples we take a look what actually gets stored when
-we either use a non-UTC default value or the client uses a non-UTC value
-in their insert query. Failures in this chapters are marked with
-`C`{.verbatim} in the tables.
+In the following examples we take a look what actually gets inserted to
+the table when we either use a non-UTC default value or the client uses
+a non-UTC value in their insert query. Failures in this chapters are
+marked with `C` in the tables.
 
-## MySQL
+As explained later in the article, Prisma Query Engine modifies the
+`INSERT` statement adding the default value from the PSL if the value is
+missing for the given field; causing issues if not using a UTC timezone.
 
-In our example we store a default value of
-`1975-08-19T23:15:30+07:00`{.verbatim} to different types of datetime
-columns, observing what goes wrong. In all cases the Query Engine
-converts the value to `1975-08-19T16:15:30Z`{.verbatim} before storing
-(see below where we modify the value).
+### MySQL
 
-### @db.DateTime
+In our example the PSL definition has a default value of
+`1975-08-19T23:15:30+07:00` in different types of datetime columns,
+observing what goes wrong. In all cases the Query Engine converts the
+value to `1975-08-19T16:15:30Z` on insert and update statements before .
 
-Storing the value `1975-08-19 16:15:30`{.verbatim}. In the database we
-have values stored from other systems respecting the database default
-with the value of `1975-08-19 23:15:30`{.verbatim}. We have two
-different default values in the database because of Prisma at this
-point.
+1.  @db.DateTime
 
-This is the default native type Prisma uses for datetimes.
+    Prisma will insert `1975-08-19 16:15:30`. In the database we have
+    values inserted from other systems respecting the database default
+    with the value of `1975-08-19 23:15:30`. We have two different
+    default values in the database because of Prisma at this point.
 
-### @db.Time
+    This is the default native type Prisma uses for datetimes.
 
-Storing the value `16:15:30`{.verbatim}. Other systems store the given
-`23:15:30`{.verbatim} and now we have two different default values in
-the database with no idea which ones are correct.
+2.  @db.Time
 
-### @db.Date
+    Prisma will insert the default value `16:15:30`. Other systems
+    insert the given `23:15:30` and now we have two different default
+    values in the database with no idea which ones are correct.
 
-In this example we have in the PSL the default
-`1975-08-19T00:05:30+01:00`{.verbatim}. Due to the conversion to UTC,
-the value gets converted into `1975-08-18T23:05:30Z`{.verbatim}. We
-store the value of `1975-08-18`{.verbatim} and other systems writing to
-the database use the value `1975-08-19`{.verbatim}.
+3.  @db.Date
 
-### @db.Timestamp
+    In this example we have in the PSL the default
+    `1975-08-19T00:05:30+01:00`. Due to the conversion to UTC, the value
+    gets converted into `1975-08-18T23:05:30Z`. Prisma will insert the
+    value of `1975-08-18` and other systems writing to the database
+    insert the value `1975-08-19`.
 
-A timestamp value is always a number of (micro)seconds since
-`1970-01-01 00:00:00`{.verbatim} in UTC. Converting between timezones
-does not change the underlying value. The `TIMESTAMP`{.verbatim} type is
-the only one that is not set wrong by Prisma if the user is using a
-non-UTC timezone.
+4.  @db.Timestamp
 
-## PostgreSQL
+    A timestamp value is always a number of (micro)seconds since
+    `1970-01-01 00:00:00` in UTC. Converting between timezones does not
+    change the underlying value. The `TIMESTAMP` type is the only one
+    that is not set wrong by Prisma if the user is using a non-UTC
+    timezone.
 
-In our example we store a default value of
-`"1975-08-19T23:15:30+07:00"`{.verbatim} to different types of datetime
-columns, observing what goes wrong. In all cases the Query Engine
-converts the value to `1975-08-19T16:15:30Z`{.verbatim} before storing.
+### PostgreSQL
 
-### @db.Timestamp
+In our example the PSL definition has a default value of
+`1975-08-19T23:15:30+07:00` in different types of datetime columns,
+observing what goes wrong. In all cases the Query Engine converts the
+value to `1975-08-19T16:15:30Z` on insert and update statements before
+writing to the table.
 
-A timestamp value is always a number of (micro)seconds since
-`1970-01-01 00:00:00`{.verbatim} in UTC. Converting between timezones
-does not change the underlying value. The `TIMESTAMP`{.verbatim} type is
-the only one that is not set wrong by Prisma if the user is using a
-non-UTC timezone.
+1.  @db.Timestamp
 
-This is the default native type Prisma uses for datetimes.
+    A timestamp value is always a number of (micro)seconds since
+    `1970-01-01 00:00:00` in UTC. Converting between timezones does not
+    change the underlying value. The `TIMESTAMP` type is the only one
+    that is not set wrong by Prisma if the user is using a non-UTC
+    timezone.
 
-### @db.Timestamptz
+    This is the default native type Prisma uses for datetimes.
 
-A timestamp with an additional offset given. Prisma stores the timestamp
-as in the example above, and stores the offset as `0`{.verbatim} while
-we should be storing `7`{.verbatim}.
+2.  @db.Timestamptz
 
-### @db.Date
+    A timestamp with an additional offset given. Prisma inserts the
+    timestamp as in the example above, and stores the offset as `0`
+    while we should be storing `7`.
 
-We have in the PSL the default `1975-08-19T00:05:30+01:00`{.verbatim}.
-Due to the conversion to UTC, the value gets converted into
-`1975-08-18T23:05:30Z`{.verbatim}. We store the value of
-`1975-08-18`{.verbatim} and other systems writing to the database use
-the value `1975-08-19`{.verbatim}.
+3.  @db.Date
 
-### @db.Time
+    We have in the PSL the default `1975-08-19T00:05:30+01:00`. Due to
+    the conversion to UTC, the value gets converted into
+    `1975-08-18T23:05:30Z`. We store the value of `1975-08-18` and other
+    systems writing to the database use the value `1975-08-19`.
 
-Storing the value `16:15:30`{.verbatim}. Other systems store the given
-`23:15:30`{.verbatim} and now we have two different default values in
-the database.
+4.  @db.Time
 
-### @db.Timetz
+    Prisma will insert the value `16:15:30`. Other systems will insert
+    the given `23:15:30` and now we have two different default values in
+    the database.
 
-Storing the value `16:15:30Z`{.verbatim}. Other systems store the given
-`23:15:30+07:00`{.verbatim} and now we have two different default values
-in the database.
+5.  @db.Timetz
 
-## SQL Server
+    Prisma will insert the value `16:15:30Z`. Other systems will insert
+    the given `23:15:30+07:00` and now we have two different default
+    values in the database.
 
-In our example we store a default value of
-`1975-08-19T23:15:30+07:00`{.verbatim} to different types of datetime
-columns, observing what goes wrong. In all cases the Query Engine
-converts the value to `1975-08-19T16:15:30Z`{.verbatim} before storing.
+### SQL Server
 
-### @db.Datetime2 / @db.Datetime / @db.SmallDateTime
+In our example the PSL definition has a default value of
+`1975-08-19T23:15:30+07:00` in different types of datetime columns,
+observing what goes wrong. In all cases the Query Engine converts the
+value to `1975-08-19T16:15:30Z` on insert and update statements before
+storing.
 
-Storing the value `1975-08-19 16:15:30`{.verbatim}. In the database we
-have values stored from other systems with the default of
-`1975-08-19T23:15:30+07:00`{.verbatim}, which in those systems will be
-stored as `1975-08-19 23:15:30`{.verbatim}. We have two different
-default values in the database because of Prisma at this point.
+1.  @db.Datetime2 / @db.Datetime / @db.SmallDateTime
 
-`DateTime2`{.verbatim} is the default native type Prisma uses for
-datetimes.
+    Prisma will insert the value `1975-08-19 16:15:30`. In the database
+    we have values inserted from other systems with the default of
+    `1975-08-19T23:15:30+07:00`, which will be inserted as
+    `1975-08-19 23:15:30`. We have two different default values in the
+    database because of Prisma at this point.
 
-### @db.Date
+    `DateTime2` is the default native type Prisma uses for datetimes.
 
-We have in the PSL the default `1975-08-19T00:05:30+01:00`{.verbatim}.
-Due to the conversion to UTC, the value gets converted into
-`1975-08-18T23:05:30Z`{.verbatim}. We store the value of
-`1975-08-18`{.verbatim} and other systems writing to the database use
-the value `1975-08-19`{.verbatim}.
+2.  @db.Date
 
-### @db.Time
+    We have in the PSL the default `1975-08-19T00:05:30+01:00`. Due to
+    the conversion to UTC, the value gets converted into
+    `1975-08-18T23:05:30Z`. We insert the value of `1975-08-18` and
+    other systems writing to the database use the value `1975-08-19`.
 
-Storing the value `16:15:30`{.verbatim}. Other systems store the given
-`23:15:30`{.verbatim} and now we have two different default values in
-the database.
+3.  @db.Time
 
-### @db.DateTimeOffset
+    Prisma will insert the value `16:15:30`. Other systems will insert
+    the given `23:15:30` and now we have two different default values in
+    the database.
 
-We don\'t really strong a wrong value here or lose information as we do
-with the other types. We just store a wrong offset in for the
-`datetimeoffset`{.verbatim} type. We store
-`1975-08-19T16:15:30Z`{.verbatim} and any other instance that is not
-Prisma writes `1975-08-19T23:15:30+07:00`{.verbatim}. This data can be
-corrected, but is still not correct.
+4.  @db.DateTimeOffset
 
-## Datetime in Prisma Client
+    Prisma will insert the value `1975-08-19T16:15:30Z`. Other systems
+    will insert the given `1975-08-19T23:15:30+07:00`. While this is
+    wrong and we should fix it, it is also the only mistake where the
+    values can be fixed afterwards with a migration script.
+
+## Why and Where We Break The Values in Prisma Client
 
 Assuming this model:
 
-``` {.prisma}
+``` prisma
 model A {
   id  Int      @default(autoincrement()) @id
   val DateTime @default("1975-08-19T23:15:30+07:00")
@@ -235,18 +281,17 @@ model A {
 A typical Prisma Client request to insert a datetime would start from
 the Client query:
 
-``` {.javascript}
+``` javascript
 await prisma.a.create({ data: {
   val: new Date('August 19, 1975 23:15:30 GMT+07:00'),
   foo: "bar"
 }})
 ```
 
-We translate this to a GraphQL query, using the
-`JSON.stringify`{.verbatim} function, which converts the datetime to
-UTC:
+We translate this to a GraphQL query, using the `JSON.stringify`
+function, which converts the datetime to UTC:
 
-``` {.javascript}
+``` javascript
 > const d = new Date('August 19, 1975 23:15:30 GMT+07:00')
 undefined
 > JSON.stringify(d)
@@ -255,7 +300,7 @@ undefined
 
 The client query in GraphQL then gets the value in UTC:
 
-``` {.javascript}
+``` javascript
 mutation {
   createOneA(data: {
     val: "1975-08-19T16:15:30.000Z"
@@ -269,20 +314,19 @@ mutation {
 ```
 
 Crossing the boundary to the Rust code base in Query Engine, the
-datetime value will get converted to the internal `Value`{.verbatim}
-representation. In the case of a `DateTime`{.verbatim} value we parse
-the string to an instance of `DateTime<FixedOffset>`{.verbatim}, keeping
-the given offset as-is.
+datetime value will get converted to the internal `Value`
+representation. In the case of a `DateTime` value we parse the string to
+an instance of `DateTime<FixedOffset>`, keeping the given offset as-is.
 
 ### Datetime via default in Prisma Client
 
 In the case of using a default value for the datetime, the client in
 this case will not send anything to this field; letting the Query Engine
 to take the value from the PSL. PSL is parsing the given datetime as
-`DateTime<FixedOffset>`{.verbatim}, giving it to the Query Engine as-is
-without converting it to UTC.
+`DateTime<FixedOffset>`, giving it to the Query Engine as-is without
+converting it to UTC.
 
-``` {.javascript}
+``` javascript
 await prisma.a.create({ data: {
   foo: "bar"
 }})
@@ -291,7 +335,7 @@ await prisma.a.create({ data: {
 The JavaScipt code is not tampering with non-existing values, and we get
 the following GraphQL query in the Query Engine.
 
-``` {.javascript}
+``` javascript
 mutation {
   createOneA(data: {
     foo: "bar"
@@ -313,9 +357,9 @@ database.
 
 Before writing to the database, the SQL connector in the Query Engine
 converts the user-provided value or the PSL default once again to
-`DateTime<Utc>`{.verbatim}.
+`DateTime<Utc>`.
 
-``` {.sql}
+``` sql
 // SQL with Params
 Query: INSERT INTO "public"."A" ("val","foo") VALUES ($1,$2) RETURNING "public"."A"."id"
 Params: [1975-08-19 16:15:30 UTC,"bar"]
@@ -332,26 +376,25 @@ default value is how the user-provided value is always in UTC due to the
 JavaScript code, and the default value in the given timezone.
 
 > Broken: DateTime value read back after creating it (either via PSL
-> `@default`{.verbatim} or Prisma Client query) is different timezone
-> than defined in PSL `@default`{.verbatim} and Prisma Client query
-> parameter.
+> `@default` or Prisma Client query) is different timezone than defined
+> in PSL `@default` and Prisma Client query parameter.
 
 > Broken: DateTime value read back after creating it is different
-> depending on if it was created via `@default`{.verbatim} or via
-> `@default(dbgenerated(...))`{.verbatim}
+> depending on if it was created via `@default` or via
+> `@default(dbgenerated(...))`
 
-> Broken: Migrated version PSL type `DateTime`{.verbatim} does not have
-> timezone in **PostgreSQL** but accepts datetime strings with timezone
-> in both PSL `@default`{.verbatim} and Prisma Client query parameter.
+> Broken: Migrated version PSL type `DateTime` does not have timezone in
+> **PostgreSQL** but accepts datetime strings with timezone in both PSL
+> `@default` and Prisma Client query parameter.
 
 ## Default Values in Migrations
 
 In the next experiments, we try to migrate a default value to our
-database. First we\'ll try with using the default datetime type we
-choose for different databases, and what happens when we try to
-`push`{.verbatim} the following schema:
+database. First we'll try with using the default datetime type we choose
+for different databases, and what happens when we try to `push` the
+following schema:
 
-``` {.prisma}
+``` prisma
 model foo {
   id Int      @id @default(autoincrement())
   a  DateTime @default("1995-05-02T16:20:00+07:00")
@@ -362,7 +405,7 @@ model foo {
 
 The SQL we generate:
 
-``` {.sql}
+``` sql
 CREATE TABLE `foo` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `a` DATETIME NOT NULL DEFAULT '1995-05-02T16:20:00+07:00',
@@ -371,25 +414,25 @@ CREATE TABLE `foo` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-The result `prisma db push`{.verbatim} gives to us:
+The result `prisma db push` gives to us:
 
-``` {.text}
+``` text
 reading the prisma schema from test.prisma
 Error: Invalid default value for 'a'
 ```
 
 ### MySQL 8.0.19
 
-The result `prisma db push`{.verbatim} gives to us:
+The result `prisma db push` gives to us:
 
-``` {.text}
+``` text
 Schema pushed to database. (1 steps)
 ```
 
 Introspecting the data model we just pushed gives us a different result
 compared to where we started:
 
-``` {.prisma}
+``` prisma
 model foo {
   id Int      @id @default(autoincrement())
   a  DateTime @default(dbgenerated("'1995-05-02 09:20:00.000'"))
@@ -406,25 +449,22 @@ native types:
 
 1.  Date
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Date
     }
     ```
 
-    Push works. Introspection returns:
+    Push returns an error:
 
-    ``` {.prisma}
-    model foo {
-      id Int      @id @default(autoincrement())
-      a  DateTime @default(dbgenerated("'1995-05-02'")) @db.Date
-    }
+    ``` text
+    Error: Invalid default value for 'a'
     ```
 
 2.  Time
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Time
@@ -433,13 +473,13 @@ native types:
 
     Push returns an error:
 
-    ``` {.text}
+    ``` text
     Error: Invalid default value for 'a'
     ```
 
 3.  Timestamp
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Timestamp
@@ -448,7 +488,7 @@ native types:
 
     Push works, we introspect the following data model back:
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default(dbgenerated("'1995-05-02 09:20:00'")) @db.Timestamp(0)
@@ -457,23 +497,23 @@ native types:
 
 ### MySQL 5.7.32
 
-The result `prisma db push`{.verbatim} gives to us:
+The result `prisma db push` gives to us:
 
-``` {.text}
+``` text
 Error: Incorrect datetime value: '1995-05-02T16:20:00+07:00' for column 'a' at row 1
 ```
 
 ### MariaDB 10
 
-The result `prisma db push`{.verbatim} gives to us:
+The result `prisma db push` gives to us:
 
-``` {.text}
+``` text
 Error: Invalid default value for 'a'
 ```
 
 ### PostgreSQL 14
 
-``` {.sql}
+``` sql
 CREATE TABLE "foo" (
     "id" SERIAL NOT NULL,
     "a" TIMESTAMP(3) NOT NULL DEFAULT '1995-05-02 16:20:00 +07:00',
@@ -482,15 +522,15 @@ CREATE TABLE "foo" (
 );
 ```
 
-The result `prisma db push`{.verbatim} gives to us:
+The result `prisma db push` gives to us:
 
-``` {.text}
+``` text
 Schema pushed to database. (1 steps)
 ```
 
 Introspecting gives a different data model back:
 
-``` {.prisma}
+``` prisma
 model foo {
   id Int      @id @default(autoincrement())
   a  DateTime @default(dbgenerated("'1995-05-02 16:20:00'::timestamp without time zone"))
@@ -502,7 +542,7 @@ examples.
 
 1.  Date
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Date
@@ -511,7 +551,7 @@ examples.
 
     Push works, introspection result:
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default(dbgenerated("'1995-05-02'::date")) @db.Date
@@ -520,7 +560,7 @@ examples.
 
 2.  Time
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Time
@@ -529,7 +569,7 @@ examples.
 
     Push works, introspection result:
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default(dbgenerated("'16:20:00'::time without time zone")) @db.Time(6)
@@ -538,7 +578,7 @@ examples.
 
 3.  Timetz
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Timetz
@@ -547,7 +587,7 @@ examples.
 
     Push works, introspection result
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default(dbgenerated("'16:20:00+07'::time with time zone")) @db.Timetz(6)
@@ -556,7 +596,7 @@ examples.
 
 4.  Timestamptz
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Timestamptz
@@ -565,7 +605,7 @@ examples.
 
     Push works, introspection result:
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default(dbgenerated("'1995-05-02 09:20:00+00'::timestamp with time zone")) @db.Timestamptz(6)
@@ -576,7 +616,7 @@ examples.
 
 The generated DDL:
 
-``` {.sql}
+``` sql
 CREATE TABLE [dbo].[foo] (
     [id] INT NOT NULL IDENTITY(1,1),
     [a] DATETIME2 NOT NULL CONSTRAINT [foo_a_df] DEFAULT '1995-05-02 16:20:00 +07:00',
@@ -586,7 +626,7 @@ CREATE TABLE [dbo].[foo] (
 
 Push works, introspection returns:
 
-``` {.prisma}
+``` prisma
 model foo {
   id Int      @id @default(autoincrement())
   a  DateTime @default(dbgenerated("1995-05-02 16:20:00 +07:00"))
@@ -595,13 +635,13 @@ model foo {
 
 When we push this again, we get the error:
 
-``` {.text}
+``` text
 Error: Incorrect syntax near '16'.
 ```
 
 The faulty DDL:
 
-``` {.sql}
+``` sql
 CREATE TABLE [dbo].[foo] (
     [id] INT NOT NULL IDENTITY(1,1),
     [a] DATETIME2 NOT NULL CONSTRAINT [foo_a_df] DEFAULT 1995-05-02 16:20:00 +07:00,
@@ -611,7 +651,7 @@ CREATE TABLE [dbo].[foo] (
 
 1.  Date
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Date
@@ -620,7 +660,7 @@ CREATE TABLE [dbo].[foo] (
 
     Push works, introspected result:
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default(dbgenerated("1995-05-02 16:20:00 +07:00")) @db.Date
@@ -629,13 +669,13 @@ CREATE TABLE [dbo].[foo] (
 
     Funnily enough, pushing this one AGAIN gives a syntax error:
 
-    ``` {.text}
+    ``` text
     Error: Incorrect syntax near '16'.
     ```
 
     The faulty SQL in this case:
 
-    ``` {.sql}
+    ``` sql
     CREATE TABLE [dbo].[foo] (
         [id] INT NOT NULL IDENTITY(1,1),
         [a] DATE NOT NULL CONSTRAINT [foo_a_df] DEFAULT 1995-05-02 16:20:00 +07:00,
@@ -645,7 +685,7 @@ CREATE TABLE [dbo].[foo] (
 
 2.  Time
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.Time
@@ -654,7 +694,7 @@ CREATE TABLE [dbo].[foo] (
 
     Push works, introspection:
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default(dbgenerated("1995-05-02 16:20:00 +07:00")) @db.Time
@@ -663,13 +703,13 @@ CREATE TABLE [dbo].[foo] (
 
     Push again:
 
-    ``` {.text}
+    ``` text
     Error: Incorrect syntax near '16'.
     ```
 
     Faulty DDL:
 
-    ``` {.sql}
+    ``` sql
     CREATE TABLE [dbo].[foo] (
         [id] INT NOT NULL IDENTITY(1,1),
         [a] TIME NOT NULL CONSTRAINT [foo_a_df] DEFAULT 1995-05-02 16:20:00 +07:00,
@@ -679,7 +719,7 @@ CREATE TABLE [dbo].[foo] (
 
 3.  DateTimeOffset
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default("1995-05-02T16:20:00+07:00") @db.DateTimeOffset
@@ -688,7 +728,7 @@ CREATE TABLE [dbo].[foo] (
 
     Push works, introspect:
 
-    ``` {.prisma}
+    ``` prisma
     model foo {
       id Int      @id @default(autoincrement())
       a  DateTime @default(dbgenerated("1995-05-02 16:20:00 +07:00")) @db.DateTimeOffset
@@ -697,13 +737,13 @@ CREATE TABLE [dbo].[foo] (
 
     Second push:
 
-    ``` {.text}
+    ``` text
     Error: Incorrect syntax near '16'.
     ```
 
     DDL:
 
-    ``` {.sql}
+    ``` sql
     CREATE TABLE [dbo].[foo] (
         [id] INT NOT NULL IDENTITY(1,1),
         [a] DATETIMEOFFSET NOT NULL CONSTRAINT [foo_a_df] DEFAULT 1995-05-02 16:20:00 +07:00,
@@ -713,10 +753,9 @@ CREATE TABLE [dbo].[foo] (
 
 ## Default With Current Timestamp
 
-Prisma allows a function `now()`{.verbatim} in the PSL field
-`@default`{.verbatim} attribute:
+Prisma allows a function `now()` in the PSL field `@default` attribute:
 
-``` {.prisma}
+``` prisma
 model foo {
   id Int      @id @default(autoincrement())
   a  DateTime @default(now())
@@ -725,7 +764,7 @@ model foo {
 
 This in general works the same in all databases. The generated DDL:
 
-``` {.sql}
+``` sql
 CREATE TABLE `foo` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `a` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -734,31 +773,31 @@ CREATE TABLE `foo` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-Client creates one `foo`{.verbatim} without any parameters:
+Client creates one `foo` without any parameters:
 
-``` {.typescript}
+``` typescript
 await client.create({})
 ```
 
 Query Engine adds the default as UTC:
 
-``` {.sql}
+``` sql
 INSERT INTO `prisma`.`foo` (`a`) VALUES (?)
 params=[2022-01-20 17:35:11.270 UTC]
 ```
 
 There is no way to change the timezone.
 
-Changing the native type allows using `now()`{.verbatim}, but the
-resulting DDL is not very often accepted by the database. We miss
-validations in these cases.
+Changing the native type allows using `now()`, but the resulting DDL is
+not very often accepted by the database. We miss validations in these
+cases.
 
 ## Default with updatedAt
 
-Another Prisma specialty in the PSL syntax is the
-`@updatedAt`{.verbatim} attribute:
+Another Prisma specialty in the PSL syntax is the `@updatedAt`
+attribute:
 
-``` {.prisma}
+``` prisma
 model foo {
   id Int      @id @default(autoincrement())
   a  DateTime @updatedAt
@@ -767,7 +806,7 @@ model foo {
 
 This is not reflected at all in the DDL:
 
-``` {.sql}
+``` sql
 CREATE TABLE `foo` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `a` DATETIME(3) NOT NULL,
@@ -776,39 +815,38 @@ CREATE TABLE `foo` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-So it\'s a completely client-side feature. As expected, the Query Engine
+So it's a completely client-side feature. As expected, the Query Engine
 inserts the current time in UTC when using the feature.
 
-``` {.sql}
+``` sql
 INSERT INTO `prisma`.`foo` (`a`) VALUES (?)
 params=[2022-01-20 17:47:10.197774387 UTC]
 ```
 
-The `updatedAt`{.verbatim} can be used in any datetime types. The
-resulting value will just lose precision depending on the type.
+The `updatedAt` can be used in any datetime types. The resulting value
+will just lose precision depending on the type.
 
 ## How Our DateTime Handling is Especially Problematic in MySQL
 
 MySQL does not store the timezone to any of the datetime columns it
-supports: `DATE`{.verbatim} for dates, `TIME`{.verbatim} for times,
-`DATETIME`{.verbatim} for combined dates and times and
-`TIMESTAMP`{.verbatim} for (micro)seconds since 1970.
+supports: `DATE` for dates, `TIME` for times, `DATETIME` for combined
+dates and times and `TIMESTAMP` for (micro)seconds since 1970.
 
 The user has a few different ways to define the timezone for inserted
 datetimes:
 
 -   When starting the server, either implicitly from the system
-    `locale`{.verbatim}, using a parameter, using a configuration value
-    or an environment variable.
--   With `SET GLOBAL time_zone = ...`{.verbatim} as an admin user.
--   Whenever connecting with `SET time_zone = ...`{.verbatim}, defining
-    it for the whole lifetime of the connection.
--   From version `8.0.19`{.verbatim} forward, the time zone can be
-    defined when inserting. This requires support from the driver.
+    `locale`, using a parameter, using a configuration value or an
+    environment variable.
+-   With `SET GLOBAL time_zone = ...` as an admin user.
+-   Whenever connecting with `SET time_zone = ...`, defining it for the
+    whole lifetime of the connection.
+-   From version `8.0.19` forward, the time zone can be defined when
+    inserting. This requires support from the driver.
 
 This means the only way to define the default value is by using the
-`dbgenerated`{.verbatim} escape hatch, leading to lots of problems
-[described in this
+`dbgenerated` escape hatch, leading to lots of problems [described in
+this
 document](https://www.notion.so/Better-representing-Date-Time-and-Datetime-Default-Values-in-the-PSL-b754d2cb84a54bebb876327bc4f51d2b).
 
 When writing a value with Prisma, the Query Engine converts all
@@ -821,7 +859,7 @@ of the western hemisphere.
 
 If a user writes the following definition in the PSL:
 
-``` {.prisma}
+``` prisma
 model A {
   id  Int      @id @default(autoincrement())
   val DateTime @default("1996-12-19T16:39:57-08:00")
@@ -829,11 +867,11 @@ model A {
 ```
 
 This is the only correct way of writing a default value without using
-`dbgenerated`{.verbatim}. It will lead to a few problems. First comes
-from the Query Engine. We can store a new record with no data to get the
-default value:
+`dbgenerated`. It will lead to a few problems. First comes from the
+Query Engine. We can store a new record with no data to get the default
+value:
 
-``` {.javascript}
+``` javascript
 mutation {
   createOneA(data: { }) {
     id
@@ -844,7 +882,7 @@ mutation {
 
 Surprisingly what the user gets back is the value converted to UTC:
 
-``` {.javascript}
+``` javascript
 {
   "data": {
     "createOneA": {
@@ -855,35 +893,35 @@ Surprisingly what the user gets back is the value converted to UTC:
 }
 ```
 
-Same happens when the user creates a `Date`{.verbatim} object in a
-non-UTC timezone. We will convert the time to UTC, lose the timezone
-information from the value and leave the user very confused.
+Same happens when the user creates a `Date` object in a non-UTC
+timezone. We will convert the time to UTC, lose the timezone information
+from the value and leave the user very confused.
 
 # Suggested Changes
 
 ## Changes in Migrations and Introspection
 
-### Introduce new ways to express datetimes in `@default`{.verbatim}
+### Introduce new ways to express datetimes in `@default`
 
 With MySQL versions earlier than 8.0.19 and MariaDB, using the RFC-3339
 format in the default value will lead to a migration error due to the
 database not knowing what to do with the timezone:
 
-``` {.example}
+``` example
 Error: Incorrect datetime value: '1996-12-19T16:39:57-08:00' for column 'val' at row 1
 ```
 
 To support datetime default values in a more standardized way, we should
-allow defining all different forms of values directly in the
-`@default`{.verbatim} attribute. This requires Introspection Engine to
-detect the format of the stored value, create a corresponding type in
-Rust and enable a correct diffing in the Migration Engine.
+allow defining all different forms of values directly in the `@default`
+attribute. This requires Introspection Engine to detect the format of
+the stored value, create a corresponding type in Rust and enable a
+correct diffing in the Migration Engine.
 
 In the PSL definition, we then enable more different ways of defining a
-datetime, including the necessary validations. Let\'s see an example of
-a MySQL model with all possible datetime combinations:
+datetime, including the necessary validations. Let's see an example of a
+MySQL model with all possible datetime combinations:
 
-``` {.prisma}
+``` prisma
 model A {
   id Int      @id
   // This is the default native type. The fraction is `3`, so we include
@@ -904,7 +942,7 @@ model A {
 
 PostgreSQL:
 
-``` {.prisma}
+``` prisma
 model A {
   id Int      @id
   // This is the default native type. The fraction is `3`, so we include
@@ -928,7 +966,7 @@ model A {
 
 SQL Server:
 
-``` {.prisma}
+``` prisma
 model A {
   id Int      @id
   // This is the default native type. Optional fraction included.
@@ -948,7 +986,7 @@ model A {
 
 MongoDB:
 
-``` {.prisma}
+``` prisma
 model A {
   id Int      @id
   // Timestamp is the default
@@ -963,7 +1001,7 @@ SQLite:
 Numeric or string storage. [Can be stored in two
 formats](https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#sqlite-5):
 
-``` {.prisma}
+``` prisma
 model A {
   id Int      @id
   a  DateTime @default("1996-12-19T16:39:57-08:00")
@@ -974,10 +1012,10 @@ model A {
 ## Changes in the Query Engine
 
 The Query Engine should not break user workflows when defining the
-`@default`{.verbatim} attribute directly. Especially in systems such as
-MySQL where converting to UTC would lead to wrong default values being
-written. This issue must be addressed before the new defaults can be
-used in the Migration and Introspection engines accordingly.
+`@default` attribute directly. Especially in systems such as MySQL where
+converting to UTC would lead to wrong default values being written. This
+issue must be addressed before the new defaults can be used in the
+Migration and Introspection engines accordingly.
 
 ### Solution \#1: Stop Handling Defaults in the Query Engine
 
@@ -985,7 +1023,7 @@ If the database supports default values, the Query Engine should stop
 adding them to the queries, leaving it for the database. In the scope of
 dates and times, we should just remove the client side defaults for the
 datetime values; still having them for databases such as MongoDB which
-doesn\'t support default values.
+doesn't support default values.
 
 This solution will allow the Migrations team to work on the PSL,
 Migration Engine and Introspection Engine changes without client needing
@@ -994,10 +1032,10 @@ values, but not explicit datetimes from the Client.
 
 ### Solution \#2: Adding More Internal DateTime Types
 
-Internally in the Query Engine, we\'d add new variants to the
-`Value`{.verbatim} enum:
+Internally in the Query Engine, we'd add new variants to the `Value`
+enum:
 
-``` {.rust}
+``` rust
 enum Value {
     Text(String),
     Int(i64),
@@ -1020,18 +1058,17 @@ with Solution \#1, this will fix the default values but the JavaScript
 code would still be sending incorrect timezones and the explicitly given
 datetimes would not be stored correctly.
 
-### Solution \#3: More Types in PSL, Conversion to `DateTime<FixedOffset>`{.verbatim} in the Client
+### Solution \#3: More Types in PSL, Conversion to `DateTime<FixedOffset>` in the Client
 
-Instead of changing the `Value`{.verbatim} for Query Engine, Migration
-Engine and Introspection Engine, we could have a separate
-`Value`{.verbatim} implementation for the migrations and introspection,
-keeping the `Value`{.verbatim} implementation of Query Engine as-is.
-This means for the PSL and schema side of things we have more
-granularity (see the `Value`{.verbatim} definition in the Solution \#2).
+Instead of changing the `Value` for Query Engine, Migration Engine and
+Introspection Engine, we could have a separate `Value` implementation
+for the migrations and introspection, keeping the `Value` implementation
+of Query Engine as-is. This means for the PSL and schema side of things
+we have more granularity (see the `Value` definition in the Solution
+\#2).
 
 When communicating the AST from the PSL side to the Query Engine, we
-convert the more granular datetime value to a
-`DateTime<FixedOffset>`{.verbatim}.
+convert the more granular datetime value to a `DateTime<FixedOffset>`.
 
 This solution would allow us to fix Migration and Introspection
 problems. The Client would still be writing incorrect values on non-UTC
@@ -1043,7 +1080,7 @@ This solution is a bit mixed bag. It can be combined with one of the
 earlier solutions, and is the one that would solve the write issues on
 different time zones correctly.
 
-We\'d introduce a new option in the connection string to define the
+We'd introduce a new option in the connection string to define the
 client time zone. This would have a few different meanings in Prisma:
 
 In case of MySQL, the Query Engine must either take care to inform the
@@ -1051,7 +1088,7 @@ database in what timezone the values are written. This can be handled
 [per
 connection](https://dev.mysql.com/doc/refman/5.6/en/time-zone-support.html#time-zone-variables):
 
-``` {.sql}
+``` sql
 SET time_zone = timezone;
 ```
 
@@ -1068,9 +1105,9 @@ timezones](https://github.com/mysqljs/mysql#establishing-connections).
 
 Other databases than MySQL are not able to define the timezone in the
 connection. For them it is enough for the JavaScript Client code to
-stringify the `Date`{.verbatim} object in the right timezone, and the
-client to not tamper with the value, allowing the user-provided and
-default values to get written to the database correctly.
+stringify the `Date` object in the right timezone, and the client to not
+tamper with the value, allowing the user-provided and default values to
+get written to the database correctly.
 
 Finally the Query Engine must stop tampering with the timezones and just
 pass the value to the database as-is.
@@ -1079,8 +1116,8 @@ pass the value to the database as-is.
 
 -   The PSL validations would not allow the RFC-3339 values on some of
     the datetime native types anymore.
--   The defaults would be introspected without `dbgenerated`{.verbatim}.
-    ***(not sure if breaking)***
+-   The defaults would be introspected without `dbgenerated`. ***(not
+    sure if breaking)***
 -   Client Solution \#1: If somebody was relying on the default to be
     converted to UTC, it would now be written as-defined.
 -   Client Solution \#2: Depends on if we have more client types. If
