@@ -38,8 +38,8 @@ Tables show what errors to expect with a combination of the given type and datab
 | Type         | <= 8.0.18 | > 8.0.18 |
 |--------------+-----------+----------|
 | DateTime (+) | C M I     | C I      |
-| Time         | C M I     | C I      |
-| Date         | C M I     | C I      |
+| Time         | C M I     | C M I    |
+| Date         | C M I     | C M I    |
 | Timestamp    | M I       | I        |
 
 *** PostgreSQL
@@ -65,81 +65,83 @@ Tables show what errors to expect with a combination of the given type and datab
 
 In the next chapters we go through the problems one by one. In general we see Migration Engine failing with datetime defaults in older MySQL versions, Introspection Engine not really able to read datetime defaults in any database and Client will produce wrong values if the user uses a non-UTC timezone for every type except timestamps.
 
-** The Result in Different Datetime Types
+** How Prisma Client Breaks With Default DateTime Values
 
-In the following examples we take a look what actually gets stored when we either use a non-UTC default value or the client uses a non-UTC value in their insert query. Failures in this chapters are marked with =C= in the tables.
+In the following examples we take a look what actually gets inserted to the table when we either use a non-UTC default value or the client uses a non-UTC value in their insert query. Failures in this chapters are marked with =C= in the tables.
 
-** MySQL
+As explained later in the article, Prisma Query Engine modifies the =INSERT= statement adding the default value from the PSL if the value is missing for the given field; causing issues if not using a UTC timezone.
 
-In our example we store a default value of =1975-08-19T23:15:30+07:00= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing (see below where we modify the value).
+*** MySQL
 
-*** @db.DateTime
+In our example the PSL definition has a default value of =1975-08-19T23:15:30+07:00= in different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= on insert and update statements before .
 
-Storing the value =1975-08-19 16:15:30=. In the database we have values stored from other systems respecting the database default with the value of =1975-08-19 23:15:30=. We have two different default values in the database because of Prisma at this point.
+**** @db.DateTime
 
-This is the default native type Prisma uses for datetimes.
-
-*** @db.Time
-
-Storing the value =16:15:30=. Other systems store the given =23:15:30= and now we have two different default values in the database with no idea which ones are correct.
-
-*** @db.Date
-
-In this example we have in the PSL the default =1975-08-19T00:05:30+01:00=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. We store the value of =1975-08-18= and other systems writing to the database use the value =1975-08-19=.
-
-*** @db.Timestamp
-
-A timestamp value is always a number of (micro)seconds since =1970-01-01 00:00:00= in UTC. Converting between timezones does not change the underlying value. The =TIMESTAMP= type is the only one that is not set wrong by Prisma if the user is using a non-UTC timezone.
-
-** PostgreSQL
-
-In our example we store a default value of ="1975-08-19T23:15:30+07:00"= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing.
-
-*** @db.Timestamp
-
-A timestamp value is always a number of (micro)seconds since =1970-01-01 00:00:00= in UTC. Converting between timezones does not change the underlying value. The =TIMESTAMP= type is the only one that is not set wrong by Prisma if the user is using a non-UTC timezone.
+Prisma will insert =1975-08-19 16:15:30=. In the database we have values inserted from other systems respecting the database default with the value of =1975-08-19 23:15:30=. We have two different default values in the database because of Prisma at this point.
 
 This is the default native type Prisma uses for datetimes.
 
-*** @db.Timestamptz
+**** @db.Time
 
-A timestamp with an additional offset given. Prisma stores the timestamp as in the example above, and stores the offset as =0= while we should be storing =7=.
+Prisma will insert the default value =16:15:30=. Other systems insert the given =23:15:30= and now we have two different default values in the database with no idea which ones are correct.
 
-*** @db.Date
+**** @db.Date
+
+In this example we have in the PSL the default =1975-08-19T00:05:30+01:00=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. Prisma will insert the value of =1975-08-18= and other systems writing to the database insert the value =1975-08-19=.
+
+**** @db.Timestamp
+
+A timestamp value is always a number of (micro)seconds since =1970-01-01 00:00:00= in UTC. Converting between timezones does not change the underlying value. The =TIMESTAMP= type is the only one that is not set wrong by Prisma if the user is using a non-UTC timezone.
+
+*** PostgreSQL
+
+In our example the PSL definition has a default value of =1975-08-19T23:15:30+07:00= in different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= on insert and update statements before writing to the table.
+
+**** @db.Timestamp
+
+A timestamp value is always a number of (micro)seconds since =1970-01-01 00:00:00= in UTC. Converting between timezones does not change the underlying value. The =TIMESTAMP= type is the only one that is not set wrong by Prisma if the user is using a non-UTC timezone.
+
+This is the default native type Prisma uses for datetimes.
+
+**** @db.Timestamptz
+
+A timestamp with an additional offset given. Prisma inserts the timestamp as in the example above, and stores the offset as =0= while we should be storing =7=.
+
+**** @db.Date
 
 We have in the PSL the default =1975-08-19T00:05:30+01:00=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. We store the value of =1975-08-18= and other systems writing to the database use the value =1975-08-19=.
 
-*** @db.Time
+**** @db.Time
 
-Storing the value =16:15:30=. Other systems store the given =23:15:30= and now we have two different default values in the database.
+Prisma will insert the value =16:15:30=. Other systems will insert the given =23:15:30= and now we have two different default values in the database.
 
-*** @db.Timetz
+**** @db.Timetz
 
-Storing the value =16:15:30Z=. Other systems store the given =23:15:30+07:00= and now we have two different default values in the database.
+Prisma will insert the value =16:15:30Z=. Other systems will insert the given =23:15:30+07:00= and now we have two different default values in the database.
 
-** SQL Server
+*** SQL Server
 
-In our example we store a default value of =1975-08-19T23:15:30+07:00= to different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= before storing.
+In our example the PSL definition has a default value of =1975-08-19T23:15:30+07:00= in different types of datetime columns, observing what goes wrong. In all cases the Query Engine converts the value to =1975-08-19T16:15:30Z= on insert and update statements before storing.
 
-*** @db.Datetime2 / @db.Datetime / @db.SmallDateTime
+**** @db.Datetime2 / @db.Datetime / @db.SmallDateTime
 
-Storing the value =1975-08-19 16:15:30=. In the database we have values stored from other systems with the default of =1975-08-19T23:15:30+07:00=, which in those systems will be stored as =1975-08-19 23:15:30=. We have two different default values in the database because of Prisma at this point.
+Prisma will insert the value =1975-08-19 16:15:30=. In the database we have values inserted from other systems with the default of =1975-08-19T23:15:30+07:00=, which will be inserted as =1975-08-19 23:15:30=. We have two different default values in the database because of Prisma at this point.
 
 =DateTime2= is the default native type Prisma uses for datetimes.
 
-*** @db.Date
+**** @db.Date
 
-We have in the PSL the default =1975-08-19T00:05:30+01:00=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. We store the value of =1975-08-18= and other systems writing to the database use the value =1975-08-19=.
+We have in the PSL the default =1975-08-19T00:05:30+01:00=. Due to the conversion to UTC, the value gets converted into =1975-08-18T23:05:30Z=. We insert the value of =1975-08-18= and other systems writing to the database use the value =1975-08-19=.
 
-*** @db.Time
+**** @db.Time
 
-Storing the value =16:15:30=. Other systems store the given =23:15:30= and now we have two different default values in the database.
+Prisma will insert the value =16:15:30=. Other systems will insert the given =23:15:30= and now we have two different default values in the database.
 
-*** @db.DateTimeOffset
+**** @db.DateTimeOffset
 
-We don't really strong a wrong value here or lose information as we do with the other types. We just store a wrong offset in for the =datetimeoffset= type. We store =1975-08-19T16:15:30Z= and any other instance that is not Prisma writes =1975-08-19T23:15:30+07:00=. This data can be corrected, but is still not correct.
+Prisma will insert the value =1975-08-19T16:15:30Z=. Other systems will insert the given =1975-08-19T23:15:30+07:00=. While this is wrong and we should fix it, it is also the only mistake where the values can be fixed afterwards with a migration script.
 
-** Datetime in Prisma Client
+** Why and Where We Break The Values in Prisma Client
 
 Assuming this model:
 
@@ -306,13 +308,10 @@ model foo {
 }
 #+end_src
 
-Push works. Introspection returns:
+Push returns an error:
 
-#+begin_src prisma
-model foo {
-  id Int      @id @default(autoincrement())
-  a  DateTime @default(dbgenerated("'1995-05-02'")) @db.Date
-}
+#+begin_src text
+Error: Invalid default value for 'a'
 #+end_src
 
 **** Time

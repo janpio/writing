@@ -17,6 +17,6 @@ jobs:
       - uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: Conversion
-          commit_user_name: conversion-bot
-          commit_user_email: conversionbot@nauk.io
-          commit_author: conversion-bot <conversionbot@nauk.io>
+          commit_user_name: pimeys
+          commit_user_email: julius+github@nauk.io
+          commit_author: Julius de Bruijn <julius+github@nauk.io>
