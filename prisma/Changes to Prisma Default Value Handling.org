@@ -33,27 +33,35 @@ Tables show what errors to expect with a combination of the given type and datab
 - I = Introspection fails to read the value back from a migrated database correctly.
 - (+) = Default native type
 
-| MySQL Type   | <= 8.0.18 | > 8.0.18 |
+*** MySQL
+
+| Type         | <= 8.0.18 | > 8.0.18 |
 |--------------+-----------+----------|
 | DateTime (+) | C M I     | C I      |
 | Time         | C M I     | C I      |
 | Date         | C M I     | C I      |
 | Timestamp    | M I       | I        |
 
-| PostgreSQL Type | Versions 9 to 14 |
-| Timestamp (+)   | I                |
-| Date            | C I              |
-| Time            | C I              |
-| Timetz          | C I              |
-| Timestamptz     | C I              |
+*** PostgreSQL
 
-| SQL Server Type | Versions 2017 and 2019 |
-| DateTime2 (+)   | C I                    |
-| DateTime        | C I                    |
-| SmallDateTime   | C I                    |
-| DateTimeOffset  | C I                    |
-| Date            | C I                    |
-| Time            | C I                    |
+| Type          | Versions 9 to 14 |
+|---------------+------------------|
+| Timestamp (+) | I                |
+| Date          | C I              |
+| Time          | C I              |
+| Timetz        | C I              |
+| Timestamptz   | C I              |
+
+*** SQL Server
+
+| Type           | Versions 2017 and 2019 |
+|----------------+------------------------|
+| DateTime2 (+)  | C I                    |
+| DateTime       | C I                    |
+| SmallDateTime  | C I                    |
+| DateTimeOffset | C I                    |
+| Date           | C I                    |
+| Time           | C I                    |
 
 In the next chapters we go through the problems one by one. In general we see Migration Engine failing with datetime defaults in older MySQL versions, Introspection Engine not really able to read datetime defaults in any database and Client will produce wrong values if the user uses a non-UTC timezone for every type except timestamps.
 
