@@ -245,7 +245,7 @@ Broken: DateTime value read back after creating it is different depending on if 
 Broken: Migrated version PSL type =DateTime= does not have timezone in *PostgreSQL* but accepts datetime strings with timezone in both PSL =@default= and Prisma Client query parameter.
 #+END_QUOTE
 
-** Default Values in Migrations
+** How Prisma Migrations and Introspection Breaks With Default DateTime Values
 
 In the next experiments, we try to migrate a default value to our database. First we'll try with using the default datetime type we choose for different databases, and what happens when we try to =push= the following schema:
 
@@ -602,7 +602,7 @@ CREATE TABLE [dbo].[foo] (
 );
 #+end_src
 
-** Default With Current Timestamp
+** Special Case: The Current Timestamp
 
 Prisma allows a function =now()= in the PSL field =@default= attribute:
 
@@ -641,7 +641,7 @@ There is no way to change the timezone.
 
 Changing the native type allows using =now()=, but the resulting DDL is not very often accepted by the database. We miss validations in these cases.
 
-** Default with updatedAt
+** Special Case: The =updatedAt= Attribute
 
 Another Prisma specialty in the PSL syntax is the =@updatedAt= attribute:
 
