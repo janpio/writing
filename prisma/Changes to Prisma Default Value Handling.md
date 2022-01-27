@@ -18,16 +18,19 @@
         -   [Datetime via default in Prisma
             Client](#datetime-via-default-in-prisma-client)
         -   [Result in the database](#result-in-the-database)
-    -   [Default Values in Migrations](#default-values-in-migrations)
+    -   [How Prisma Migrations and Introspection Breaks With Default
+        DateTime
+        Values](#how-prisma-migrations-and-introspection-breaks-with-default-datetime-values)
         -   [MySQL 8.0.18](#mysql-8.0.18)
         -   [MySQL 8.0.19](#mysql-8.0.19)
         -   [MySQL 5.7.32](#mysql-5.7.32)
         -   [MariaDB 10](#mariadb-10)
         -   [PostgreSQL 14](#postgresql-14)
         -   [SQL Server 2019](#sql-server-2019)
-    -   [Default With Current
-        Timestamp](#default-with-current-timestamp)
-    -   [Default with updatedAt](#default-with-updatedat)
+    -   [Special Case: The Current
+        Timestamp](#special-case-the-current-timestamp)
+    -   [Special Case: The `updatedAt`
+        Attribute](#special-case-the-updatedat-attribute)
     -   [How Our DateTime Handling is Especially Problematic in
         MySQL](#how-our-datetime-handling-is-especially-problematic-in-mysql)
 -   [Suggested Changes](#suggested-changes)
@@ -387,7 +390,7 @@ JavaScript code, and the default value in the given timezone.
 > **PostgreSQL** but accepts datetime strings with timezone in both PSL
 > `@default` and Prisma Client query parameter.
 
-## Default Values in Migrations
+## How Prisma Migrations and Introspection Breaks With Default DateTime Values
 
 In the next experiments, we try to migrate a default value to our
 database. First we'll try with using the default datetime type we choose
@@ -751,7 +754,7 @@ CREATE TABLE [dbo].[foo] (
     );
     ```
 
-## Default With Current Timestamp
+## Special Case: The Current Timestamp
 
 Prisma allows a function `now()` in the PSL field `@default` attribute:
 
@@ -792,7 +795,7 @@ Changing the native type allows using `now()`, but the resulting DDL is
 not very often accepted by the database. We miss validations in these
 cases.
 
-## Default with updatedAt
+## Special Case: The `updatedAt` Attribute
 
 Another Prisma specialty in the PSL syntax is the `@updatedAt`
 attribute:
