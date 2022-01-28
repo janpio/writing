@@ -12,8 +12,8 @@ some extra work when we think about indices and how we'd use them with
 the nested type definitions.
 
 A composite type is a nested type, not defined in the database schema
-and in case of MongoDB, is just a nested JSON definition on collection
-bar:
+and in case of MongoDB, is just a nested JSON definition (here we
+imagine a collection bar):
 
 ``` javascript
 {
@@ -50,6 +50,19 @@ Additionally, an index can be created to the nested object:
 We do not yet have any way to define this kind of indices in the PSL.
 There are a few different ways to do it.
 
+MongoDB allows indices to array fields. A collection with the following
+data:
+
+``` javascript
+{ "lol": [{ "a": 1 }] }
+```
+
+An index can be defined as following:
+
+``` javascript
+{ "lol.a": 1 }
+```
+
 ## Solution \#1: Index Definition in the Nested Type
 
 Let's imagine we can define the index in the type definition:
@@ -57,6 +70,21 @@ Let's imagine we can define the index in the type definition:
 ``` prisma
 model bar {
   foo BarFoo
+  lol Int
+}
+
+type BarFoo {
+  bar String
+
+  @@index([bar])
+}
+```
+
+And for an array of nested objects:
+
+``` prisma
+model bar {
+  foo BarFoo[]
   lol Int
 }
 
@@ -115,3 +143,22 @@ type BarFoo {
 Here the user decides in which collection the index is created. If they
 need it also in the model `lol`, they'd need to add another `@@index`
 attribute in there.
+
+An index to an array of nested objects would look like:
+
+``` prisma
+model bar {
+  foo BarFoo[]
+  lol Int
+
+  @@index([foo.bar])
+}
+
+model lol {
+  foo BarFoo
+}
+
+type BarFoo {
+  bar String
+}
+```
